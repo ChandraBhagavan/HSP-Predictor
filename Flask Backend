@@ -1,0 +1,56 @@
+from flask import Flask, render_template, request
+import pandas as pd
+from rdkit import Chem
+import requests
+
+app = Flask(__name__)
+
+# Load the Excel files
+group1_df = pd.read_excel('/Users/kommuchandravenkatasaibhagavan/Desktop/Group1_HSP.xlsx')
+group2_df = pd.read_excel('/Users/kommuchandravenkatasaibhagavan/Desktop/Group2.xlsx')
+
+# Convert the data to dictionaries
+group1_dict = group1_df.set_index('Group')[['δd', 'δp', 'δhb']].to_dict(orient='index')
+group2_dict = group2_df.set_index('Group')[['δd', 'δp', 'δhb']].to_dict(orient='index')
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    hsp_values = None
+    error = None
+
+    if request.method == 'POST':
+        iupac_name = request.form['iupac_name']
+
+        try:
+            # Get SMILES string using the NIH Cactus API
+            response = requests.get(f'https://cactus.nci.nih.gov/chemical/structure/{iupac_name}/smiles')
+            smiles = response.text.strip()
+
+            if smiles:
+                mol = Chem.MolFromSmiles(smiles)
+                if mol:
+                    # Identify functional groups (for example purposes)
+                    functional_groups = []
+                    for atom in mol.GetAtoms():
+                        atom_symbol = atom.GetSymbol()
+                        if atom_symbol in group1_dict:
+                            functional_groups.append(atom_symbol)
+
+                    # Calculate HSP values using the provided formula
+                    hsp_values = {
+                        'δd': sum(group1_dict.get(fg, {'δd': 0})['δd'] for fg in functional_groups) + 17.3231,
+                        'δp': sum(group1_dict.get(fg, {'δp': 0})['δp'] for fg in functional_groups) + 7.3548,
+                        'δhb': sum(group1_dict.get(fg, {'δhb': 0})['δhb'] + group2_dict.get(fg, {'δhb': 0})['δhb'] for fg in functional_groups) + 7.9793,
+                    }
+                else:
+                    error = "Unable to parse SMILES string into a molecule."
+            else:
+                error = "No SMILES string found for the given IUPAC name."
+
+        except Exception as e:
+            error = f"An error occurred: {str(e)}"
+
+    return render_template('index.html', hsp_values=hsp_values, error=error)
+
+if __name__ == '__main__':
+    app.run(debug=True)
